@@ -190,9 +190,13 @@ function readSettings(head) {
 // Reads one source document. Returns the header fields, the settings table, the stated
 // objectives and the questions — plus `issues`, every deviation this reader had to absorb.
 // Nothing is repaired silently: each parser decides what to do with the issue list.
-function readQuizDoc(docxDir, label) {
-  const all = lines(path.join(docxDir, 'word', 'document.xml'));
+// opts.normalise(lines, issues, label) -> lines: an optional per-course rewrite applied before
+// anything is read, for a source whose layout this reader does not know. It must emit this
+// reader's own grammar; every check below still runs on what it returns.
+function readQuizDoc(docxDir, label, opts = {}) {
   const issues = [];
+  let all = lines(path.join(docxDir, 'word', 'document.xml'));
+  if (opts.normalise) all = opts.normalise(all, issues, label);
 
   const firstQ = all.findIndex(l => Q_HEAD.test(clean(l)));
   if (firstQ < 0) throw new Error(`${label}: no "Question N - …" header anywhere in the document`);
@@ -371,6 +375,19 @@ function readQuizDoc(docxDir, label) {
     }
 
     if (!q.options.length) { q.prompt.push(line); pendingOption = null; continue; }
+    // AN UNLABELLED FEEDBACK LINE. Business Process Automation Course 3's Module 3 graded quiz
+    // drops the "Feedback:" label entirely and opens each explanation with its verdict alone —
+    // "Correct. STP is…" / "Not quite. Reclaimed labor hours…". Only a line directly under an
+    // option still awaiting feedback, AND opening with a verdict, is taken this way; anything
+    // else still falls through to the report below.
+    if (pendingOption && VERDICT.test(line)) {
+      const v = VERDICT.exec(line);
+      pendingOption.correct = IS_CORRECT.test(v[1]);
+      pendingOption.text_feedback = clean(line.slice(v[0].length));
+      pendingOption.unlabelled = true;
+      pendingOption = null;
+      continue;
+    }
     // Anything after the options that is not an option or a feedback line is a continuation
     // of the last feedback — the source does not do this, but a revision might.
     issues.push(`Q${q.num}: unrecognised line after the options: ${line.slice(0, 60)}`);
